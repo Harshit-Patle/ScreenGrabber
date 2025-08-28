@@ -2,110 +2,85 @@
 <html lang="en">
 
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ScreenGrabber</title>
     <style>
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-            width: 250px;
-            padding: 15px;
-            text-align: center;
-            background-color: #f0f2f5;
-            color: #1c1e21;
+            font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+            width: 260px;
+            margin: 0;
+            padding: 14px;
+            background: #f7f7f9;
+            color: #111;
         }
 
         h1 {
-            font-size: 18px;
-            margin-top: 0;
-            margin-bottom: 15px;
-            color: #050505;
+            font-size: 16px;
+            margin: 0 0 10px;
         }
 
-        .container {
+        .row {
             display: flex;
-            flex-direction: column;
-            gap: 15px;
-        }
-
-        .button-group {
-            display: flex;
+            gap: 8px;
+            margin-bottom: 12px;
             justify-content: center;
-            gap: 10px;
         }
 
         button {
-            padding: 10px 20px;
-            border: none;
+            padding: 8px 12px;
+            border: 0;
             border-radius: 6px;
-            font-size: 14px;
-            font-weight: bold;
+            font-weight: 600;
             cursor: pointer;
-            transition: background-color 0.2s, transform 0.1s;
-        }
-
-        button:active {
-            transform: scale(0.98);
         }
 
         #startButton {
-            background-color: #1877f2;
-            color: white;
-        }
-
-        #startButton:hover {
-            background-color: #166fe5;
+            background: #2e7d32;
+            color: #fff;
         }
 
         #stopButton {
-            background-color: #e4e6eb;
-            color: #050505;
+            background: #c62828;
+            color: #fff;
         }
 
-        #stopButton:hover {
-            background-color: #dcdfe4;
+        .card {
+            background: #fff;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 10px;
         }
 
-        .status-display {
-            background-color: #ffffff;
-            border: 1px solid #dddfe2;
-            border-radius: 6px;
-            padding: 12px;
+        .label {
+            color: #555;
+            font-size: 12px;
         }
 
-        .status-display p {
-            margin: 0;
+        .value {
             font-size: 14px;
-        }
-
-        #countdown {
-            font-weight: bold;
-            font-size: 20px;
-            color: #1877f2;
-            margin-top: 5px;
-            display: block;
-        }
-
-        #screenshotCount {
-            font-weight: bold;
+            font-weight: 600;
         }
     </style>
 </head>
 
 <body>
     <h1>ScreenGrabber</h1>
-    <div class="container">
-        <div class="button-group">
-            <button id="startButton">Start</button>
-            <button id="stopButton">Stop</button>
-        </div>
-        <div class="status-display">
-            <p>Time until next screenshot:</p>
-            <span id="countdown">05:00</span>
-        </div>
-        <div class="status-display">
-            <p>Screenshots taken: <span id="screenshotCount">0</span></p>
-        </div>
+    <div class="row">
+        <button id="startButton" type="button">Start</button>
+        <button id="stopButton" type="button">Stop</button>
+    </div>
+    <div class="card">
+        <div class="label">Status</div>
+        <div id="status" class="value">Idle</div>
+    </div>
+    <div class="card" style="margin-top:8px;">
+        <div class="label">Next screenshot in</div>
+        <div id="countdown" class="value">--:--</div>
+    </div>
+    <div class="card" style="margin-top:8px;">
+        <div class="label">Screenshots taken</div>
+        <div id="screenshotCount" class="value">0</div>
     </div>
     <script src="popup.js"></script>
 </body>

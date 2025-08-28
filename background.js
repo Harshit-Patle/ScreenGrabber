@@ -1,126 +1,146 @@
-// Global interval for screenshots in minutes (change this value whenever you want)
-// Single source of truth for the schedule; popup reads this via state updates.
-const SCREENSHOT_INTERVAL_MINUTES = 5;
+// ScreenGrabber background (MV3 service worker)
+// Cross-browser: uses tabs.captureTab in Firefox, captureVisibleTab in Chromium.
+// Single place to change the interval:
+const SCREENSHOT_INTERVAL_MINUTES = 0.2; // Change this value to adjust cadence
 
-// Function to format date and time for the filename
+// Keys for chrome.storage.local
+const STORAGE_KEYS = {
+    running: 'sg_running',
+    count: 'sg_count',
+    lastTs: 'sg_last_ts',
+    nextTs: 'sg_next_ts'
+};
+
+// Utility: formatted timestamp for filenames
 function getFormattedDateTime() {
     const now = new Date();
-    const year = now.getFullYear();
-    const month = (now.getMonth() + 1).toString().padStart(2, '0');
-    const day = now.getDate().toString().padStart(2, '0');
-    const hours = now.getHours().toString().padStart(2, '0');
-    const minutes = now.getMinutes().toString().padStart(2, '0');
-    const seconds = now.getSeconds().toString().padStart(2, '0');
-    return `${year}-${month}-${day}_${hours}-${minutes}-${seconds}`;
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
 }
 
-// Function to take a screenshot and download it
-async function takeScreenshot() {
+// Small promisified helpers for callback-style chrome APIs
+const pTabsQuery = (q) => new Promise((res, rej) => chrome.tabs.query(q, r => chrome.runtime.lastError ? rej(chrome.runtime.lastError) : res(r)));
+const pCaptureVisible = (winId, opt) => new Promise((res, rej) => chrome.tabs.captureVisibleTab(winId, opt, r => chrome.runtime.lastError ? rej(chrome.runtime.lastError) : res(r)));
+const pCaptureTab = (tabId, opt) => new Promise((res, rej) => chrome.tabs.captureTab(tabId, opt, r => chrome.runtime.lastError ? rej(chrome.runtime.lastError) : res(r)));
+const pDownload = (opts) => new Promise((res, rej) => chrome.downloads.download(opts, id => chrome.runtime.lastError ? rej(chrome.runtime.lastError) : res(id)));
+const pStorageGet = (keys) => new Promise((res, rej) => chrome.storage.local.get(keys, r => chrome.runtime.lastError ? rej(chrome.runtime.lastError) : res(r)));
+const pStorageSet = (obj) => new Promise((res, rej) => chrome.storage.local.set(obj, () => chrome.runtime.lastError ? rej(chrome.runtime.lastError) : res()));
+const pStorageRemove = (keys) => new Promise((res, rej) => chrome.storage.local.remove(keys, () => chrome.runtime.lastError ? rej(chrome.runtime.lastError) : res()));
+
+// Build a serializable state object for the popup
+async function getState() {
+    const { [STORAGE_KEYS.running]: running = false,
+        [STORAGE_KEYS.count]: count = 0,
+        [STORAGE_KEYS.lastTs]: lastTs = null,
+        [STORAGE_KEYS.nextTs]: nextTs = null } = await pStorageGet([STORAGE_KEYS.running, STORAGE_KEYS.count, STORAGE_KEYS.lastTs, STORAGE_KEYS.nextTs]);
+    return { running, screenshotCount: count, lastScreenshotTs: lastTs, nextTriggerTs: nextTs, intervalMinutes: SCREENSHOT_INTERVAL_MINUTES };
+}
+
+// Notify any open UI about state changes (best-effort)
+async function sendStateUpdate() {
     try {
-        // Capture the visible part of the currently active tab
-        const dataUrl = await chrome.tabs.captureVisibleTab(null, {
-            format: 'png'
-        });
-
-        // Create the filename
-        const filename = `Nifty_${getFormattedDateTime()}.png`;
-
-        // Use the downloads API to save the file
-        chrome.downloads.download({
-            url: dataUrl,
-            filename: filename,
-            saveAs: false // Set to true if you want the user to choose the location
-        });
-
-        // Update the screenshot count (persisted in chrome.storage.local)
-        const { screenshotCount = 0 } = await chrome.storage.local.get('screenshotCount');
-        const newCount = screenshotCount + 1;
-        await chrome.storage.local.set({ screenshotCount: newCount });
-
-        // Send an update to the UI if it's open
-        sendStateUpdate();
-
-    } catch (error) {
-        console.error("Failed to take screenshot:", error);
+        const state = await getState();
+        chrome.runtime.sendMessage({ type: 'state', state });
+    } catch (_) {
+        // ignore if no listeners
     }
 }
 
-// Function to send the current state to the popup
-// Includes the intervalMinutes so the popup can display the default countdown correctly
-async function sendStateUpdate() {
-    const state = await chrome.storage.local.get(['isRunning', 'screenshotCount', 'nextScreenshotTime']);
-    state.intervalMinutes = SCREENSHOT_INTERVAL_MINUTES;
-    chrome.runtime.sendMessage({ command: 'updateUI', state }).catch(err => {
-        // Ignore errors, which usually mean the popup is not open.
-    });
+// Cross-browser capture of the active tab as PNG data URL
+async function captureActiveTabPng() {
+    const [active] = await pTabsQuery({ active: true, currentWindow: true });
+    if (!active) throw new Error('No active tab');
+    if (typeof chrome.tabs.captureTab === 'function') {
+        // Firefox prefers captureTab
+        return await pCaptureTab(active.id, { format: 'png' });
+    }
+    // Chromium path
+    return await pCaptureVisible(active.windowId, { format: 'png' });
 }
 
-// Listener for messages from the popup
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    (async () => {
-        if (message.command === 'start') {
-            await startProcess();
-        } else if (message.command === 'stop') {
-            await stopProcess();
-        } else if (message.command === 'getState') {
-            const state = await chrome.storage.local.get(['isRunning', 'screenshotCount', 'nextScreenshotTime']);
-            state.intervalMinutes = SCREENSHOT_INTERVAL_MINUTES;
-            sendResponse(state);
-            return; // Keep the message channel open for async response
-        }
-        // Send an immediate UI update after start/stop
-        sendStateUpdate();
-    })();
-    return true; // Indicates an async response
-});
+// Take a screenshot and download it, update counters and timestamps
+async function takeScreenshot() {
+    const dataUrl = await captureActiveTabPng();
+    const filename = `ScreenGrabber_${getFormattedDateTime()}.png`;
+    await pDownload({ url: dataUrl, filename, saveAs: false });
+    const now = Date.now();
+    const s = await getState();
+    const count = (s.screenshotCount || 0) + 1;
+    await pStorageSet({ [STORAGE_KEYS.count]: count, [STORAGE_KEYS.lastTs]: now });
+    await sendStateUpdate();
+}
 
-// Main start function
-// - Marks the process as running
-// - Takes an immediate screenshot
-// - Schedules a repeating alarm based on SCREENSHOT_INTERVAL_MINUTES
+// Start: mark running, take an immediate screenshot, schedule repeating alarm
 async function startProcess() {
-    // Set initial state and take the first screenshot immediately
-    await chrome.storage.local.set({ isRunning: true, screenshotCount: 0 });
-    await takeScreenshot(); // Take the first one right away
-
-    // Create an alarm that will fire every 5 minutes
-    const nextScreenshotTime = Date.now() + SCREENSHOT_INTERVAL_MINUTES * 60 * 1000;
-    await chrome.storage.local.set({ nextScreenshotTime });
-    chrome.alarms.create('screenshotAlarm', {
+    const s = await getState();
+    if (s.running) return s;
+    await pStorageSet({ [STORAGE_KEYS.running]: true });
+    await takeScreenshot();
+    const nextTs = Date.now() + SCREENSHOT_INTERVAL_MINUTES * 60 * 1000;
+    await pStorageSet({ [STORAGE_KEYS.nextTs]: nextTs });
+    chrome.alarms.create('sg_alarm', {
         delayInMinutes: SCREENSHOT_INTERVAL_MINUTES,
         periodInMinutes: SCREENSHOT_INTERVAL_MINUTES
     });
+    await sendStateUpdate();
+    return getState();
 }
 
-// Main stop function
-// - Clears the screenshot alarm
-// - Flags the process as stopped
+// Stop: clear alarm, mark not running, clear next trigger
 async function stopProcess() {
-    // Clear the alarm and reset the state
-    await chrome.alarms.clear('screenshotAlarm');
-    await chrome.storage.local.set({ isRunning: false, nextScreenshotTime: null });
+    chrome.alarms.clear('sg_alarm');
+    await pStorageSet({ [STORAGE_KEYS.running]: false, [STORAGE_KEYS.nextTs]: null });
+    await sendStateUpdate();
+    return getState();
 }
 
-// Listener for the alarm
-// When the alarm fires, if still running, take a screenshot and compute the next trigger time
-chrome.alarms.onAlarm.addListener(async (alarm) => {
-    if (alarm.name === 'screenshotAlarm') {
-        const { isRunning } = await chrome.storage.local.get('isRunning');
-        if (isRunning) {
-            await takeScreenshot();
-            // Update the next screenshot time in storage
-            const nextScreenshotTime = Date.now() + SCREENSHOT_INTERVAL_MINUTES * 60 * 1000;
-            await chrome.storage.local.set({ nextScreenshotTime });
-            sendStateUpdate();
+// Messages from popup
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    (async () => {
+        try {
+            if (message?.type === 'getState') return sendResponse({ ok: true, state: await getState() });
+            if (message?.type === 'start') return sendResponse({ ok: true, state: await startProcess() });
+            if (message?.type === 'stop') return sendResponse({ ok: true, state: await stopProcess() });
+            return sendResponse({ ok: false, error: 'unknown_command' });
+        } catch (e) {
+            return sendResponse({ ok: false, error: String(e) });
         }
+    })();
+    return true; // keep port open for async sendResponse
+});
+
+// Alarm handler: take screenshot and compute next trigger
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+    if (alarm.name !== 'sg_alarm') return;
+    const s = await getState();
+    if (!s.running) return;
+    try {
+        await takeScreenshot();
+    } finally {
+        const nextTs = Date.now() + SCREENSHOT_INTERVAL_MINUTES * 60 * 1000;
+        await pStorageSet({ [STORAGE_KEYS.nextTs]: nextTs });
+        await sendStateUpdate();
     }
 });
 
-// Clean up storage when the extension is installed or reloaded
-chrome.runtime.onInstalled.addListener(() => {
-    chrome.storage.local.set({
-        isRunning: false,
-        screenshotCount: 0,
-        nextScreenshotTime: null
-    });
+// Initialize defaults on install/update and re-attach alarm if needed
+chrome.runtime.onInstalled.addListener(async () => {
+    await pStorageRemove([STORAGE_KEYS.count, STORAGE_KEYS.lastTs, STORAGE_KEYS.nextTs]);
+    await pStorageSet({ [STORAGE_KEYS.running]: false });
 });
+
+// When the worker wakes up, ensure alarm is scheduled if running
+(async function ensureAlarmOnStart() {
+    try {
+        const s = await getState();
+        if (s.running) {
+            chrome.alarms.create('sg_alarm', {
+                delayInMinutes: SCREENSHOT_INTERVAL_MINUTES,
+                periodInMinutes: SCREENSHOT_INTERVAL_MINUTES
+            });
+            if (!s.nextTriggerTs) {
+                await pStorageSet({ [STORAGE_KEYS.nextTs]: Date.now() + SCREENSHOT_INTERVAL_MINUTES * 60 * 1000 });
+            }
+        }
+    } catch (_) { /* ignore */ }
+})();

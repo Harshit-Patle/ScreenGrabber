@@ -1,106 +1,81 @@
-/**
- * Popup script for the Screenshot Extension.
- * - Kept external (no inline <script>) to comply with MV3 CSP: "script-src 'self'".
- * - Communicates with the background service worker via chrome.runtime messaging.
- * - Displays current status, countdown to next screenshot, and total screenshots taken.
- */
-// Handles popup interactions and UI updates, kept external to satisfy MV3 CSP
-(function () {
-    const isExtensionContext = () => typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage;
+// Popup UI (no inline scripts to satisfy MV3 CSP)
+// Shows running status, countdown, and count. Sends start/stop to background.
 
-    // Cache DOM elements once
-    const startButton = document.getElementById('startButton');
-    const stopButton = document.getElementById('stopButton');
-    const countdownEl = document.getElementById('countdown');
-    const countEl = document.getElementById('screenshotCount');
+const els = {
+  status: document.getElementById('status'),
+  countdown: document.getElementById('countdown'),
+  count: document.getElementById('screenshotCount'),
+  start: document.getElementById('startButton'),
+  stop: document.getElementById('stopButton')
+};
 
-    let countdownInterval;
+let state = {
+  running: false,
+  screenshotCount: 0,
+  nextTriggerTs: null,
+  intervalMinutes: 5
+};
 
-    /**
-     * Convert seconds to mm:ss string.
-     * @param {number} seconds
-     * @returns {string}
-     */
-    function formatTime(seconds) {
-        const min = Math.floor(seconds / 60);
-        const sec = seconds % 60;
-        return `${min.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
+function fmtMMSS(ms) {
+  if (ms == null || ms < 0) ms = 0;
+  const total = Math.floor(ms / 1000);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+function render() {
+  els.status.textContent = state.running ? 'Running' : 'Idle';
+  els.count.textContent = String(state.screenshotCount ?? 0);
+
+  let remainingMs;
+  if (state.running && state.nextTriggerTs) {
+    remainingMs = Math.max(0, state.nextTriggerTs - Date.now());
+  } else {
+    remainingMs = Math.floor((state.intervalMinutes ?? 5) * 60 * 1000);
+  }
+  els.countdown.textContent = fmtMMSS(remainingMs);
+}
+
+async function requestState() {
+  try {
+    const resp = await new Promise((res) => chrome.runtime.sendMessage({ type: 'getState' }, res));
+    if (resp?.ok && resp.state) {
+      state = { ...state, ...resp.state };
+      render();
     }
+  } catch (_) {/* ignore */}
+}
 
-    /**
-     * Update all UI elements based on the state reported by background.
-     * @param {{isRunning?: boolean, screenshotCount?: number, nextScreenshotTime?: number, intervalMinutes?: number}} state
-     */
-    function updateUI(state) {
-        countEl.textContent = state.screenshotCount || 0;
-        if (state.isRunning && state.nextScreenshotTime) {
-            startButton.disabled = true;
-            stopButton.disabled = false;
-            updateCountdown(state.nextScreenshotTime);
-        } else {
-            startButton.disabled = false;
-            stopButton.disabled = true;
-            if (countdownInterval) clearInterval(countdownInterval);
-            // Default countdown display uses intervalMinutes from background (single source of truth)
-            const mins = Number(state.intervalMinutes || 5);
-            const defaultSeconds = Math.max(0, Math.floor(mins * 60));
-            const min = Math.floor(defaultSeconds / 60).toString().padStart(2, '0');
-            const sec = (defaultSeconds % 60).toString().padStart(2, '0');
-            countdownEl.textContent = `${min}:${sec}`;
-        }
+// Listen for background-pushed updates (best-effort)
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg?.type === 'state' && msg.state) {
+    state = { ...state, ...msg.state };
+    render();
+  }
+});
+
+els.start.addEventListener('click', async () => {
+  try {
+    const resp = await new Promise((res) => chrome.runtime.sendMessage({ type: 'start' }, res));
+    if (resp?.ok && resp.state) {
+      state = { ...state, ...resp.state };
+      render();
     }
+  } catch (_) {/* ignore */}
+});
 
-    /**
-     * Start/refresh the 1s interval to display the countdown until next screenshot time.
-     * @param {number} nextTime - timestamp (ms) when the next screenshot will be taken
-     */
-    function updateCountdown(nextTime) {
-        if (countdownInterval) clearInterval(countdownInterval);
-        countdownInterval = setInterval(() => {
-            const remaining = Math.max(0, Math.floor((nextTime - Date.now()) / 1000));
-            countdownEl.textContent = formatTime(remaining);
-            if (remaining <= 0) {
-                clearInterval(countdownInterval);
-            }
-        }, 1000);
+els.stop.addEventListener('click', async () => {
+  try {
+    const resp = await new Promise((res) => chrome.runtime.sendMessage({ type: 'stop' }, res));
+    if (resp?.ok && resp.state) {
+      state = { ...state, ...resp.state };
+      render();
     }
+  } catch (_) {/* ignore */}
+});
 
-    startButton.addEventListener('click', () => {
-        // Ask the background service worker to start: it will take an immediate screenshot and schedule the alarm.
-        if (isExtensionContext()) {
-            chrome.runtime.sendMessage({ command: 'start' });
-        }
-    });
-
-    stopButton.addEventListener('click', () => {
-        // Ask the background service worker to stop and clear the alarm.
-        if (isExtensionContext()) {
-            chrome.runtime.sendMessage({ command: 'stop' });
-        }
-    });
-
-    if (isExtensionContext() && chrome.runtime.onMessage) {
-        chrome.runtime.onMessage.addListener((message) => {
-            if (message.command === 'updateUI') {
-                // Background pushes state updates here (e.g., after a screenshot or when toggling start/stop)
-                updateUI(message.state);
-            }
-        });
-    }
-
-    document.addEventListener('DOMContentLoaded', () => {
-        if (isExtensionContext()) {
-            // Request the latest state from background when the popup opens
-            chrome.runtime.sendMessage({ command: 'getState' }, (response) => {
-                if (chrome.runtime.lastError) {
-                    updateUI({ isRunning: false, screenshotCount: 0 });
-                } else {
-                    updateUI(response);
-                }
-            });
-        } else {
-            // Fallback for non-extension environments
-            updateUI({ isRunning: false, screenshotCount: 0 });
-        }
-    });
-})();
+// Initial load + 1s ticker for countdown display
+requestState();
+const timer = setInterval(render, 1000);
+window.addEventListener('unload', () => clearInterval(timer));

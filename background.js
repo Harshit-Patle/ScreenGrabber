@@ -1,7 +1,7 @@
 // ScreenGrabber background (MV3 service worker)
 // Cross-browser: uses tabs.captureTab in Firefox, captureVisibleTab in Chromium.
 // Single place to change the interval:
-const SCREENSHOT_INTERVAL_MINUTES = 0.2; // Change this value to adjust cadence
+const SCREENSHOT_INTERVAL_MINUTES = 5; // Change this value to adjust cadence
 
 // Keys for chrome.storage.local
 const STORAGE_KEYS = {

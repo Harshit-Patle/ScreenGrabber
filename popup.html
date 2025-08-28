@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ScreenGrabber</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            width: 250px;
+            padding: 15px;
+            text-align: center;
+            background-color: #f0f2f5;
+            color: #1c1e21;
+        }
+
+        h1 {
+            font-size: 18px;
+            margin-top: 0;
+            margin-bottom: 15px;
+            color: #050505;
+        }
+
+        .container {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .button-group {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background-color 0.2s, transform 0.1s;
+        }
+
+        button:active {
+            transform: scale(0.98);
+        }
+
+        #startButton {
+            background-color: #1877f2;
+            color: white;
+        }
+
+        #startButton:hover {
+            background-color: #166fe5;
+        }
+
+        #stopButton {
+            background-color: #e4e6eb;
+            color: #050505;
+        }
+
+        #stopButton:hover {
+            background-color: #dcdfe4;
+        }
+
+        .status-display {
+            background-color: #ffffff;
+            border: 1px solid #dddfe2;
+            border-radius: 6px;
+            padding: 12px;
+        }
+
+        .status-display p {
+            margin: 0;
+            font-size: 14px;
+        }
+
+        #countdown {
+            font-weight: bold;
+            font-size: 20px;
+            color: #1877f2;
+            margin-top: 5px;
+            display: block;
+        }
+
+        #screenshotCount {
+            font-weight: bold;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>ScreenGrabber</h1>
+    <div class="container">
+        <div class="button-group">
+            <button id="startButton">Start</button>
+            <button id="stopButton">Stop</button>
+        </div>
+        <div class="status-display">
+            <p>Time until next screenshot:</p>
+            <span id="countdown">05:00</span>
+        </div>
+        <div class="status-display">
+            <p>Screenshots taken: <span id="screenshotCount">0</span></p>
+        </div>
+    </div>
+    <script src="popup.js"></script>
+</body>
+
+</html>

@@ -5,12 +5,14 @@ const MSG_TYPES = {
   GET_STATE: 'getState',
   START: 'start',
   STOP: 'stop',
+  SET_INTERVAL: 'setInterval',
   STATE_UPDATE: 'state'
 };
 
 const els = {
   statusDot: document.getElementById('statusDot'),
   statusText: document.getElementById('statusText'),
+  intervalSelect: document.getElementById('intervalSelect'),
   countdown: document.getElementById('countdown'),
   count: document.getElementById('screenshotCount'),
   start: document.getElementById('startButton'),
@@ -52,9 +54,15 @@ function render() {
   els.statusText.textContent = isRunning ? 'Running' : 'Idle';
   els.statusDot.classList.toggle('active', isRunning);
 
-  // Button state management
+  // Controls state management
   els.start.disabled = isRunning;
   els.stop.disabled = !isRunning;
+  els.intervalSelect.disabled = isRunning;
+
+  // Sync interval dropdown value
+  if (state.intervalMinutes && els.intervalSelect.value !== String(state.intervalMinutes)) {
+    els.intervalSelect.value = String(state.intervalMinutes);
+  }
 
   // Counter
   els.count.textContent = String(state.screenshotCount ?? 0);
@@ -94,11 +102,36 @@ chrome.runtime.onMessage.addListener((msg) => {
   }
 });
 
+// Interval change handler
+els.intervalSelect.addEventListener('change', async (e) => {
+  const intervalMinutes = parseInt(e.target.value, 10) || 5;
+  state.intervalMinutes = intervalMinutes;
+  render();
+  try {
+    const resp = await chrome.runtime.sendMessage({
+      type: MSG_TYPES.SET_INTERVAL,
+      intervalMinutes
+    });
+    if (resp?.ok && resp.state) {
+      state = { ...state, ...resp.state };
+      render();
+    } else if (resp?.error) {
+      showError(resp.error);
+    }
+  } catch (err) {
+    showError(err?.message || 'Failed to save interval setting');
+  }
+});
+
 els.start.addEventListener('click', async () => {
   showError(null);
   els.start.disabled = true;
+  const intervalMinutes = parseInt(els.intervalSelect.value, 10) || 5;
   try {
-    const resp = await chrome.runtime.sendMessage({ type: MSG_TYPES.START });
+    const resp = await chrome.runtime.sendMessage({
+      type: MSG_TYPES.START,
+      intervalMinutes
+    });
     if (resp?.ok && resp.state) {
       state = { ...state, ...resp.state };
       render();

@@ -22,6 +22,7 @@
             --error-bg: #fef2f2;
             --error-border: #fecaca;
             --error-text: #b91c1c;
+            --select-bg: #f1f5f9;
         }
 
         @media (prefers-color-scheme: dark) {
@@ -41,6 +42,7 @@
                 --error-bg: #450a0a;
                 --error-border: #7f1d1d;
                 --error-text: #fca5a5;
+                --select-bg: #0f172a;
             }
         }
 
@@ -177,6 +179,35 @@
             font-variant-numeric: tabular-nums;
         }
 
+        .setting-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+        }
+
+        .interval-select {
+            background: var(--select-bg);
+            color: var(--text-main);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 4px 8px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            outline: none;
+            transition: border-color 0.2s ease;
+        }
+
+        .interval-select:focus-visible {
+            border-color: var(--btn-start);
+        }
+
+        .interval-select:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
         .error-banner {
             background: var(--error-bg);
             color: var(--error-text);
@@ -206,6 +237,21 @@
     <div class="row">
         <button id="startButton" type="button">Start</button>
         <button id="stopButton" type="button" disabled>Stop</button>
+    </div>
+
+    <div class="card">
+        <div class="setting-row">
+            <span class="label" style="margin-bottom:0;">Capture Interval</span>
+            <select id="intervalSelect" class="interval-select" aria-label="Screenshot Interval">
+                <option value="1">1 min</option>
+                <option value="2">2 mins</option>
+                <option value="5" selected>5 mins</option>
+                <option value="10">10 mins</option>
+                <option value="15">15 mins</option>
+                <option value="30">30 mins</option>
+                <option value="60">1 hour</option>
+            </select>
+        </div>
     </div>
 
     <div class="card">

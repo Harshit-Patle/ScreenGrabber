@@ -3,7 +3,7 @@
 
 // Centralized configuration & keys
 const CONFIG = {
-    INTERVAL_MINUTES: 5,
+    DEFAULT_INTERVAL_MINUTES: 5,
     ALARM_NAME: 'sg_alarm',
     DOWNLOAD_SUBFOLDER: 'ScreenGrabber'
 };
@@ -13,15 +13,24 @@ const STORAGE_KEYS = {
     count: 'sg_count',
     lastTs: 'sg_last_ts',
     nextTs: 'sg_next_ts',
-    lastError: 'sg_last_error'
+    lastError: 'sg_last_error',
+    interval: 'sg_interval'
 };
 
 const MSG_TYPES = {
     GET_STATE: 'getState',
     START: 'start',
     STOP: 'stop',
+    SET_INTERVAL: 'setInterval',
     STATE_UPDATE: 'state'
 };
+
+// Utility: sanitize interval in minutes (min: 1 min, max: 1440 mins / 24 hrs)
+function sanitizeInterval(val) {
+    const num = Number(val);
+    if (!Number.isFinite(num) || num < 1) return CONFIG.DEFAULT_INTERVAL_MINUTES;
+    return Math.min(1440, Math.round(num));
+}
 
 // Utility: formatted timestamp for filenames
 function getFormattedDateTime() {
@@ -53,15 +62,18 @@ async function getState() {
         STORAGE_KEYS.count,
         STORAGE_KEYS.lastTs,
         STORAGE_KEYS.nextTs,
-        STORAGE_KEYS.lastError
+        STORAGE_KEYS.lastError,
+        STORAGE_KEYS.interval
     ]);
+
+    const intervalMinutes = sanitizeInterval(result[STORAGE_KEYS.interval]);
 
     return {
         running: Boolean(result[STORAGE_KEYS.running]),
         screenshotCount: Number(result[STORAGE_KEYS.count] || 0),
         lastScreenshotTs: result[STORAGE_KEYS.lastTs] || null,
         nextTriggerTs: result[STORAGE_KEYS.nextTs] || null,
-        intervalMinutes: CONFIG.INTERVAL_MINUTES,
+        intervalMinutes,
         lastError: result[STORAGE_KEYS.lastError] || null
     };
 }
@@ -74,6 +86,14 @@ async function sendStateUpdate() {
     } catch (_) {
         // ignore if no active popup listener
     }
+}
+
+// Update user-configured capture interval
+async function setIntervalMinutes(rawMinutes) {
+    const intervalMinutes = sanitizeInterval(rawMinutes);
+    await chrome.storage.local.set({ [STORAGE_KEYS.interval]: intervalMinutes });
+    await sendStateUpdate();
+    return getState();
 }
 
 // Cross-browser capture of the active tab as PNG data URL
@@ -109,20 +129,24 @@ async function takeScreenshot() {
 }
 
 // Start: mark running, take an immediate screenshot, schedule repeating alarm
-async function startProcess() {
+async function startProcess(customInterval) {
     const s = await getState();
     if (s.running) return s;
+
+    const intervalMinutes = customInterval ? sanitizeInterval(customInterval) : s.intervalMinutes;
+
     try {
         await takeScreenshot();
-        const nextTs = Date.now() + CONFIG.INTERVAL_MINUTES * 60 * 1000;
+        const nextTs = Date.now() + intervalMinutes * 60 * 1000;
         await chrome.storage.local.set({
             [STORAGE_KEYS.running]: true,
             [STORAGE_KEYS.nextTs]: nextTs,
+            [STORAGE_KEYS.interval]: intervalMinutes,
             [STORAGE_KEYS.lastError]: null
         });
         await chrome.alarms.create(CONFIG.ALARM_NAME, {
-            delayInMinutes: CONFIG.INTERVAL_MINUTES,
-            periodInMinutes: CONFIG.INTERVAL_MINUTES
+            delayInMinutes: intervalMinutes,
+            periodInMinutes: intervalMinutes
         });
         await sendStateUpdate();
         return await getState();
@@ -156,8 +180,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     (async () => {
         try {
             if (message?.type === MSG_TYPES.GET_STATE) return sendResponse({ ok: true, state: await getState() });
-            if (message?.type === MSG_TYPES.START) return sendResponse({ ok: true, state: await startProcess() });
+            if (message?.type === MSG_TYPES.START) return sendResponse({ ok: true, state: await startProcess(message?.intervalMinutes) });
             if (message?.type === MSG_TYPES.STOP) return sendResponse({ ok: true, state: await stopProcess() });
+            if (message?.type === MSG_TYPES.SET_INTERVAL) return sendResponse({ ok: true, state: await setIntervalMinutes(message?.intervalMinutes) });
             return sendResponse({ ok: false, error: 'unknown_command' });
         } catch (e) {
             return sendResponse({ ok: false, error: String(e?.message || e) });
@@ -178,7 +203,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
         console.warn('ScreenGrabber background capture skipped/failed:', errorMsg);
         await chrome.storage.local.set({ [STORAGE_KEYS.lastError]: errorMsg });
     } finally {
-        const nextTs = Date.now() + CONFIG.INTERVAL_MINUTES * 60 * 1000;
+        const nextTs = Date.now() + s.intervalMinutes * 60 * 1000;
         await chrome.storage.local.set({ [STORAGE_KEYS.nextTs]: nextTs });
         await sendStateUpdate();
     }
@@ -192,7 +217,10 @@ chrome.runtime.onInstalled.addListener(async () => {
         STORAGE_KEYS.nextTs,
         STORAGE_KEYS.lastError
     ]);
-    await chrome.storage.local.set({ [STORAGE_KEYS.running]: false });
+    await chrome.storage.local.set({
+        [STORAGE_KEYS.running]: false,
+        [STORAGE_KEYS.interval]: CONFIG.DEFAULT_INTERVAL_MINUTES
+    });
 });
 
 // When the worker wakes up, ensure alarm is scheduled if running without resetting timer
@@ -202,16 +230,16 @@ chrome.runtime.onInstalled.addListener(async () => {
         if (s.running) {
             const existingAlarm = await chrome.alarms.get(CONFIG.ALARM_NAME);
             if (!existingAlarm) {
-                let delayInMinutes = CONFIG.INTERVAL_MINUTES;
+                let delayInMinutes = s.intervalMinutes;
                 if (s.nextTriggerTs && s.nextTriggerTs > Date.now()) {
                     delayInMinutes = Math.max(0.1, (s.nextTriggerTs - Date.now()) / (60 * 1000));
                 }
                 await chrome.alarms.create(CONFIG.ALARM_NAME, {
                     delayInMinutes,
-                    periodInMinutes: CONFIG.INTERVAL_MINUTES
+                    periodInMinutes: s.intervalMinutes
                 });
                 if (!s.nextTriggerTs) {
-                    await chrome.storage.local.set({ [STORAGE_KEYS.nextTs]: Date.now() + CONFIG.INTERVAL_MINUTES * 60 * 1000 });
+                    await chrome.storage.local.set({ [STORAGE_KEYS.nextTs]: Date.now() + s.intervalMinutes * 60 * 1000 });
                 }
             }
         }

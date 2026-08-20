@@ -1,0 +1,21 @@
+{
+  "name": "screengrabber",
+  "version": "1.1.0",
+  "description": "Automated periodic screenshot capture extension for Manifest V3 browsers",
+  "main": "background.js",
+  "type": "module",
+  "scripts": {
+    "check": "node -c background.js popup.js",
+    "package": "powershell -Command \"Compress-Archive -Path manifest.json, background.js, popup.html, popup.js, images -DestinationPath screengrabber-v1.1.0.zip -Force\""
+  },
+  "keywords": [
+    "screenshot",
+    "screen-capture",
+    "webextension",
+    "chrome-extension",
+    "edge-addon",
+    "manifest-v3"
+  ],
+  "author": "Harshit Patle",
+  "license": "MIT"
+}

@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Build & distribution packages
+dist/
+build/
+*.zip
+*.crx
+*.xpi
+
+# Operating System & IDE metadata
+.DS_Store
+Thumbs.db
+*.log
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temporary & scratch files
+scratch/

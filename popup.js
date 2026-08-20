@@ -6,14 +6,16 @@ const els = {
   countdown: document.getElementById('countdown'),
   count: document.getElementById('screenshotCount'),
   start: document.getElementById('startButton'),
-  stop: document.getElementById('stopButton')
+  stop: document.getElementById('stopButton'),
+  error: document.getElementById('errorMessage')
 };
 
 let state = {
   running: false,
   screenshotCount: 0,
   nextTriggerTs: null,
-  intervalMinutes: 5
+  intervalMinutes: 5,
+  lastError: null
 };
 
 function fmtMMSS(ms) {
@@ -22,6 +24,17 @@ function fmtMMSS(ms) {
   const m = Math.floor(total / 60);
   const s = total % 60;
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+function showError(msg) {
+  if (!els.error) return;
+  if (msg) {
+    els.error.textContent = msg;
+    els.error.style.display = 'block';
+  } else {
+    els.error.textContent = '';
+    els.error.style.display = 'none';
+  }
 }
 
 function render() {
@@ -35,6 +48,7 @@ function render() {
     remainingMs = Math.floor((state.intervalMinutes ?? 5) * 60 * 1000);
   }
   els.countdown.textContent = fmtMMSS(remainingMs);
+  showError(state.lastError);
 }
 
 async function requestState() {
@@ -43,8 +57,12 @@ async function requestState() {
     if (resp?.ok && resp.state) {
       state = { ...state, ...resp.state };
       render();
+    } else if (resp?.error) {
+      showError(resp.error);
     }
-  } catch (_) {/* ignore */}
+  } catch (err) {
+    showError(err?.message || 'Failed to connect to background worker');
+  }
 }
 
 // Listen for background-pushed updates (best-effort)
@@ -56,13 +74,18 @@ chrome.runtime.onMessage.addListener((msg) => {
 });
 
 els.start.addEventListener('click', async () => {
+  showError(null);
   try {
     const resp = await new Promise((res) => chrome.runtime.sendMessage({ type: 'start' }, res));
     if (resp?.ok && resp.state) {
       state = { ...state, ...resp.state };
       render();
+    } else if (resp?.error) {
+      showError(resp.error);
     }
-  } catch (_) {/* ignore */}
+  } catch (err) {
+    showError(err?.message || 'Failed to start capture session');
+  }
 });
 
 els.stop.addEventListener('click', async () => {
@@ -71,8 +94,12 @@ els.stop.addEventListener('click', async () => {
     if (resp?.ok && resp.state) {
       state = { ...state, ...resp.state };
       render();
+    } else if (resp?.error) {
+      showError(resp.error);
     }
-  } catch (_) {/* ignore */}
+  } catch (err) {
+    showError(err?.message || 'Failed to stop capture session');
+  }
 });
 
 // Initial load + 1s ticker for countdown display

@@ -61,11 +61,24 @@
             font-size: 14px;
             font-weight: 600;
         }
+
+        .error-banner {
+            background: #fde8e8;
+            color: #c81e1e;
+            border: 1px solid #f8b4b4;
+            border-radius: 6px;
+            padding: 8px 10px;
+            font-size: 12px;
+            margin-bottom: 10px;
+            word-break: break-word;
+            display: none;
+        }
     </style>
 </head>
 
 <body>
     <h1>ScreenGrabber</h1>
+    <div id="errorMessage" class="error-banner"></div>
     <div class="row">
         <button id="startButton" type="button">Start</button>
         <button id="stopButton" type="button">Stop</button>

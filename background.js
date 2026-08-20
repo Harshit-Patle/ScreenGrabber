@@ -1,15 +1,26 @@
 // ScreenGrabber background (MV3 service worker)
 // Cross-browser: uses tabs.captureTab in Firefox, captureVisibleTab in Chromium.
-// Single place to change the interval:
-const SCREENSHOT_INTERVAL_MINUTES = 5; // Change this value to adjust cadence
 
-// Keys for chrome.storage.local
+// Centralized configuration & keys
+const CONFIG = {
+    INTERVAL_MINUTES: 5,
+    ALARM_NAME: 'sg_alarm',
+    DOWNLOAD_SUBFOLDER: 'ScreenGrabber'
+};
+
 const STORAGE_KEYS = {
     running: 'sg_running',
     count: 'sg_count',
     lastTs: 'sg_last_ts',
     nextTs: 'sg_next_ts',
     lastError: 'sg_last_error'
+};
+
+const MSG_TYPES = {
+    GET_STATE: 'getState',
+    START: 'start',
+    STOP: 'stop',
+    STATE_UPDATE: 'state'
 };
 
 // Utility: formatted timestamp for filenames
@@ -35,36 +46,23 @@ function isRestrictedUrl(url) {
     return restrictedPrefixes.some(prefix => url.startsWith(prefix));
 }
 
-// Small promisified helpers for callback-style chrome APIs
-const pTabsQuery = (q) => new Promise((res, rej) => chrome.tabs.query(q, r => chrome.runtime.lastError ? rej(chrome.runtime.lastError) : res(r)));
-const pCaptureVisible = (winId, opt) => new Promise((res, rej) => chrome.tabs.captureVisibleTab(winId, opt, r => chrome.runtime.lastError ? rej(chrome.runtime.lastError) : res(r)));
-const pCaptureTab = (tabId, opt) => new Promise((res, rej) => chrome.tabs.captureTab(tabId, opt, r => chrome.runtime.lastError ? rej(chrome.runtime.lastError) : res(r)));
-const pDownload = (opts) => new Promise((res, rej) => chrome.downloads.download(opts, id => chrome.runtime.lastError ? rej(chrome.runtime.lastError) : res(id)));
-const pStorageGet = (keys) => new Promise((res, rej) => chrome.storage.local.get(keys, r => chrome.runtime.lastError ? rej(chrome.runtime.lastError) : res(r)));
-const pStorageSet = (obj) => new Promise((res, rej) => chrome.storage.local.set(obj, () => chrome.runtime.lastError ? rej(chrome.runtime.lastError) : res()));
-const pStorageRemove = (keys) => new Promise((res, rej) => chrome.storage.local.remove(keys, () => chrome.runtime.lastError ? rej(chrome.runtime.lastError) : res()));
-const pAlarmGet = (name) => new Promise((res) => chrome.alarms.get(name, res));
-
 // Build a serializable state object for the popup
 async function getState() {
-    const { [STORAGE_KEYS.running]: running = false,
-        [STORAGE_KEYS.count]: count = 0,
-        [STORAGE_KEYS.lastTs]: lastTs = null,
-        [STORAGE_KEYS.nextTs]: nextTs = null,
-        [STORAGE_KEYS.lastError]: lastError = null } = await pStorageGet([
-            STORAGE_KEYS.running,
-            STORAGE_KEYS.count,
-            STORAGE_KEYS.lastTs,
-            STORAGE_KEYS.nextTs,
-            STORAGE_KEYS.lastError
-        ]);
+    const result = await chrome.storage.local.get([
+        STORAGE_KEYS.running,
+        STORAGE_KEYS.count,
+        STORAGE_KEYS.lastTs,
+        STORAGE_KEYS.nextTs,
+        STORAGE_KEYS.lastError
+    ]);
+
     return {
-        running,
-        screenshotCount: count,
-        lastScreenshotTs: lastTs,
-        nextTriggerTs: nextTs,
-        intervalMinutes: SCREENSHOT_INTERVAL_MINUTES,
-        lastError
+        running: Boolean(result[STORAGE_KEYS.running]),
+        screenshotCount: Number(result[STORAGE_KEYS.count] || 0),
+        lastScreenshotTs: result[STORAGE_KEYS.lastTs] || null,
+        nextTriggerTs: result[STORAGE_KEYS.nextTs] || null,
+        intervalMinutes: CONFIG.INTERVAL_MINUTES,
+        lastError: result[STORAGE_KEYS.lastError] || null
     };
 }
 
@@ -72,36 +70,37 @@ async function getState() {
 async function sendStateUpdate() {
     try {
         const state = await getState();
-        chrome.runtime.sendMessage({ type: 'state', state });
+        await chrome.runtime.sendMessage({ type: MSG_TYPES.STATE_UPDATE, state });
     } catch (_) {
-        // ignore if no listeners
+        // ignore if no active popup listener
     }
 }
 
 // Cross-browser capture of the active tab as PNG data URL
 async function captureActiveTabPng() {
-    const [active] = await pTabsQuery({ active: true, currentWindow: true });
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    const active = tabs[0];
     if (!active) throw new Error('No active tab found');
     if (active.url && isRestrictedUrl(active.url)) {
         throw new Error(`Cannot capture restricted page (${active.url.split('/')[0]}//...)`);
     }
     if (typeof chrome.tabs.captureTab === 'function') {
         // Firefox prefers captureTab
-        return await pCaptureTab(active.id, { format: 'png' });
+        return await chrome.tabs.captureTab(active.id, { format: 'png' });
     }
     // Chromium path
-    return await pCaptureVisible(active.windowId, { format: 'png' });
+    return await chrome.tabs.captureVisibleTab(active.windowId, { format: 'png' });
 }
 
 // Take a screenshot and download it, update counters and timestamps
 async function takeScreenshot() {
     const dataUrl = await captureActiveTabPng();
-    const filename = `ScreenGrabber/ScreenGrabber_${getFormattedDateTime()}.png`;
-    await pDownload({ url: dataUrl, filename, conflictAction: 'uniquify', saveAs: false });
+    const filename = `${CONFIG.DOWNLOAD_SUBFOLDER}/ScreenGrabber_${getFormattedDateTime()}.png`;
+    await chrome.downloads.download({ url: dataUrl, filename, conflictAction: 'uniquify', saveAs: false });
     const now = Date.now();
     const s = await getState();
     const count = (s.screenshotCount || 0) + 1;
-    await pStorageSet({
+    await chrome.storage.local.set({
         [STORAGE_KEYS.count]: count,
         [STORAGE_KEYS.lastTs]: now,
         [STORAGE_KEYS.lastError]: null
@@ -115,22 +114,22 @@ async function startProcess() {
     if (s.running) return s;
     try {
         await takeScreenshot();
-        const nextTs = Date.now() + SCREENSHOT_INTERVAL_MINUTES * 60 * 1000;
-        await pStorageSet({
+        const nextTs = Date.now() + CONFIG.INTERVAL_MINUTES * 60 * 1000;
+        await chrome.storage.local.set({
             [STORAGE_KEYS.running]: true,
             [STORAGE_KEYS.nextTs]: nextTs,
             [STORAGE_KEYS.lastError]: null
         });
-        chrome.alarms.create('sg_alarm', {
-            delayInMinutes: SCREENSHOT_INTERVAL_MINUTES,
-            periodInMinutes: SCREENSHOT_INTERVAL_MINUTES
+        await chrome.alarms.create(CONFIG.ALARM_NAME, {
+            delayInMinutes: CONFIG.INTERVAL_MINUTES,
+            periodInMinutes: CONFIG.INTERVAL_MINUTES
         });
         await sendStateUpdate();
         return await getState();
     } catch (err) {
         const errorMsg = err?.message || String(err);
-        chrome.alarms.clear('sg_alarm');
-        await pStorageSet({
+        await chrome.alarms.clear(CONFIG.ALARM_NAME);
+        await chrome.storage.local.set({
             [STORAGE_KEYS.running]: false,
             [STORAGE_KEYS.nextTs]: null,
             [STORAGE_KEYS.lastError]: errorMsg
@@ -142,8 +141,8 @@ async function startProcess() {
 
 // Stop: clear alarm, mark not running, clear next trigger
 async function stopProcess() {
-    chrome.alarms.clear('sg_alarm');
-    await pStorageSet({
+    await chrome.alarms.clear(CONFIG.ALARM_NAME);
+    await chrome.storage.local.set({
         [STORAGE_KEYS.running]: false,
         [STORAGE_KEYS.nextTs]: null,
         [STORAGE_KEYS.lastError]: null
@@ -156,9 +155,9 @@ async function stopProcess() {
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     (async () => {
         try {
-            if (message?.type === 'getState') return sendResponse({ ok: true, state: await getState() });
-            if (message?.type === 'start') return sendResponse({ ok: true, state: await startProcess() });
-            if (message?.type === 'stop') return sendResponse({ ok: true, state: await stopProcess() });
+            if (message?.type === MSG_TYPES.GET_STATE) return sendResponse({ ok: true, state: await getState() });
+            if (message?.type === MSG_TYPES.START) return sendResponse({ ok: true, state: await startProcess() });
+            if (message?.type === MSG_TYPES.STOP) return sendResponse({ ok: true, state: await stopProcess() });
             return sendResponse({ ok: false, error: 'unknown_command' });
         } catch (e) {
             return sendResponse({ ok: false, error: String(e?.message || e) });
@@ -169,7 +168,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 // Alarm handler: take screenshot and compute next trigger
 chrome.alarms.onAlarm.addListener(async (alarm) => {
-    if (alarm.name !== 'sg_alarm') return;
+    if (alarm.name !== CONFIG.ALARM_NAME) return;
     const s = await getState();
     if (!s.running) return;
     try {
@@ -177,37 +176,42 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     } catch (err) {
         const errorMsg = err?.message || String(err);
         console.warn('ScreenGrabber background capture skipped/failed:', errorMsg);
-        await pStorageSet({ [STORAGE_KEYS.lastError]: errorMsg });
+        await chrome.storage.local.set({ [STORAGE_KEYS.lastError]: errorMsg });
     } finally {
-        const nextTs = Date.now() + SCREENSHOT_INTERVAL_MINUTES * 60 * 1000;
-        await pStorageSet({ [STORAGE_KEYS.nextTs]: nextTs });
+        const nextTs = Date.now() + CONFIG.INTERVAL_MINUTES * 60 * 1000;
+        await chrome.storage.local.set({ [STORAGE_KEYS.nextTs]: nextTs });
         await sendStateUpdate();
     }
 });
 
-// Initialize defaults on install/update and re-attach alarm if needed
+// Initialize defaults on install/update
 chrome.runtime.onInstalled.addListener(async () => {
-    await pStorageRemove([STORAGE_KEYS.count, STORAGE_KEYS.lastTs, STORAGE_KEYS.nextTs, STORAGE_KEYS.lastError]);
-    await pStorageSet({ [STORAGE_KEYS.running]: false });
+    await chrome.storage.local.remove([
+        STORAGE_KEYS.count,
+        STORAGE_KEYS.lastTs,
+        STORAGE_KEYS.nextTs,
+        STORAGE_KEYS.lastError
+    ]);
+    await chrome.storage.local.set({ [STORAGE_KEYS.running]: false });
 });
 
-// When the worker wakes up, ensure alarm is scheduled if running
+// When the worker wakes up, ensure alarm is scheduled if running without resetting timer
 (async function ensureAlarmOnStart() {
     try {
         const s = await getState();
         if (s.running) {
-            const existingAlarm = await pAlarmGet('sg_alarm');
+            const existingAlarm = await chrome.alarms.get(CONFIG.ALARM_NAME);
             if (!existingAlarm) {
-                let delayInMinutes = SCREENSHOT_INTERVAL_MINUTES;
+                let delayInMinutes = CONFIG.INTERVAL_MINUTES;
                 if (s.nextTriggerTs && s.nextTriggerTs > Date.now()) {
                     delayInMinutes = Math.max(0.1, (s.nextTriggerTs - Date.now()) / (60 * 1000));
                 }
-                chrome.alarms.create('sg_alarm', {
+                await chrome.alarms.create(CONFIG.ALARM_NAME, {
                     delayInMinutes,
-                    periodInMinutes: SCREENSHOT_INTERVAL_MINUTES
+                    periodInMinutes: CONFIG.INTERVAL_MINUTES
                 });
                 if (!s.nextTriggerTs) {
-                    await pStorageSet({ [STORAGE_KEYS.nextTs]: Date.now() + SCREENSHOT_INTERVAL_MINUTES * 60 * 1000 });
+                    await chrome.storage.local.set({ [STORAGE_KEYS.nextTs]: Date.now() + CONFIG.INTERVAL_MINUTES * 60 * 1000 });
                 }
             }
         }

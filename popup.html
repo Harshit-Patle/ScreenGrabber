@@ -6,69 +6,185 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ScreenGrabber</title>
     <style>
+        :root {
+            --bg: #f8fafc;
+            --card-bg: #ffffff;
+            --text-main: #0f172a;
+            --text-muted: #64748b;
+            --border: #e2e8f0;
+            --btn-start: #16a34a;
+            --btn-start-hover: #15803d;
+            --btn-stop: #dc2626;
+            --btn-stop-hover: #b91c1c;
+            --btn-disabled: #94a3b8;
+            --status-idle: #64748b;
+            --status-running: #16a34a;
+            --error-bg: #fef2f2;
+            --error-border: #fecaca;
+            --error-text: #b91c1c;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg: #0f172a;
+                --card-bg: #1e293b;
+                --text-main: #f8fafc;
+                --text-muted: #94a3b8;
+                --border: #334155;
+                --btn-start: #22c55e;
+                --btn-start-hover: #16a34a;
+                --btn-stop: #ef4444;
+                --btn-stop-hover: #dc2626;
+                --btn-disabled: #475569;
+                --status-idle: #94a3b8;
+                --status-running: #22c55e;
+                --error-bg: #450a0a;
+                --error-border: #7f1d1d;
+                --error-text: #fca5a5;
+            }
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
         body {
-            font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-            width: 260px;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            width: 270px;
             margin: 0;
-            padding: 14px;
-            background: #f7f7f9;
-            color: #111;
+            padding: 16px;
+            background: var(--bg);
+            color: var(--text-main);
+            user-select: none;
+        }
+
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 12px;
         }
 
         h1 {
             font-size: 16px;
-            margin: 0 0 10px;
+            font-weight: 700;
+            margin: 0;
+            letter-spacing: -0.2px;
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            padding: 2px 8px;
+            border-radius: 9999px;
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--status-idle);
+            transition: background 0.3s ease;
+        }
+
+        .status-dot.active {
+            background: var(--status-running);
+            box-shadow: 0 0 6px var(--status-running);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.6; transform: scale(1.15); }
         }
 
         .row {
             display: flex;
             gap: 8px;
             margin-bottom: 12px;
-            justify-content: center;
         }
 
         button {
-            padding: 8px 12px;
+            flex: 1;
+            padding: 9px 12px;
             border: 0;
-            border-radius: 6px;
+            border-radius: 8px;
+            font-size: 13px;
             font-weight: 600;
             cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        button:focus-visible {
+            outline: 2px solid var(--text-main);
+            outline-offset: 2px;
         }
 
         #startButton {
-            background: #2e7d32;
-            color: #fff;
+            background: var(--btn-start);
+            color: #ffffff;
+        }
+
+        #startButton:hover:not(:disabled) {
+            background: var(--btn-start-hover);
         }
 
         #stopButton {
-            background: #c62828;
-            color: #fff;
+            background: var(--btn-stop);
+            color: #ffffff;
+        }
+
+        #stopButton:hover:not(:disabled) {
+            background: var(--btn-stop-hover);
+        }
+
+        button:disabled {
+            background: var(--btn-disabled);
+            opacity: 0.5;
+            cursor: not-allowed;
         }
 
         .card {
-            background: #fff;
-            border: 1px solid #e5e7eb;
+            background: var(--card-bg);
+            border: 1px solid var(--border);
             border-radius: 8px;
-            padding: 10px;
+            padding: 10px 12px;
+            margin-bottom: 8px;
+            transition: border-color 0.2s ease;
+        }
+
+        .card:last-child {
+            margin-bottom: 0;
         }
 
         .label {
-            color: #555;
-            font-size: 12px;
+            color: var(--text-muted);
+            font-size: 11px;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 2px;
         }
 
         .value {
-            font-size: 14px;
-            font-weight: 600;
+            font-size: 15px;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
         }
 
         .error-banner {
-            background: #fde8e8;
-            color: #c81e1e;
-            border: 1px solid #f8b4b4;
-            border-radius: 6px;
+            background: var(--error-bg);
+            color: var(--error-text);
+            border: 1px solid var(--error-border);
+            border-radius: 8px;
             padding: 8px 10px;
             font-size: 12px;
+            line-height: 1.4;
             margin-bottom: 10px;
             word-break: break-word;
             display: none;
@@ -77,24 +193,31 @@
 </head>
 
 <body>
-    <h1>ScreenGrabber</h1>
-    <div id="errorMessage" class="error-banner"></div>
+    <div class="header">
+        <h1>ScreenGrabber</h1>
+        <div class="status-badge">
+            <span id="statusDot" class="status-dot"></span>
+            <span id="statusText">Idle</span>
+        </div>
+    </div>
+
+    <div id="errorMessage" class="error-banner" role="alert" aria-live="assertive"></div>
+
     <div class="row">
         <button id="startButton" type="button">Start</button>
-        <button id="stopButton" type="button">Stop</button>
+        <button id="stopButton" type="button" disabled>Stop</button>
     </div>
+
     <div class="card">
-        <div class="label">Status</div>
-        <div id="status" class="value">Idle</div>
+        <div class="label">Next Screenshot</div>
+        <div id="countdown" class="value" aria-live="polite">--:--</div>
     </div>
-    <div class="card" style="margin-top:8px;">
-        <div class="label">Next screenshot in</div>
-        <div id="countdown" class="value">--:--</div>
+
+    <div class="card">
+        <div class="label">Screenshots Saved</div>
+        <div id="screenshotCount" class="value" aria-live="polite">0</div>
     </div>
-    <div class="card" style="margin-top:8px;">
-        <div class="label">Screenshots taken</div>
-        <div id="screenshotCount" class="value">0</div>
-    </div>
+
     <script src="popup.js"></script>
 </body>
 

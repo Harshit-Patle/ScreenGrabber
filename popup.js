@@ -1,8 +1,16 @@
-// Popup UI (no inline scripts to satisfy MV3 CSP)
-// Shows running status, countdown, and count. Sends start/stop to background.
+// ScreenGrabber Popup UI Controller
+// Compliant with MV3 Content Security Policy (no inline scripts)
+
+const MSG_TYPES = {
+  GET_STATE: 'getState',
+  START: 'start',
+  STOP: 'stop',
+  STATE_UPDATE: 'state'
+};
 
 const els = {
-  status: document.getElementById('status'),
+  statusDot: document.getElementById('statusDot'),
+  statusText: document.getElementById('statusText'),
   countdown: document.getElementById('countdown'),
   count: document.getElementById('screenshotCount'),
   start: document.getElementById('startButton'),
@@ -38,22 +46,35 @@ function showError(msg) {
 }
 
 function render() {
-  els.status.textContent = state.running ? 'Running' : 'Idle';
+  const isRunning = Boolean(state.running);
+
+  // Status badge & indicator
+  els.statusText.textContent = isRunning ? 'Running' : 'Idle';
+  els.statusDot.classList.toggle('active', isRunning);
+
+  // Button state management
+  els.start.disabled = isRunning;
+  els.stop.disabled = !isRunning;
+
+  // Counter
   els.count.textContent = String(state.screenshotCount ?? 0);
 
+  // Countdown timer
   let remainingMs;
-  if (state.running && state.nextTriggerTs) {
+  if (isRunning && state.nextTriggerTs) {
     remainingMs = Math.max(0, state.nextTriggerTs - Date.now());
   } else {
     remainingMs = Math.floor((state.intervalMinutes ?? 5) * 60 * 1000);
   }
   els.countdown.textContent = fmtMMSS(remainingMs);
+
+  // Error banner
   showError(state.lastError);
 }
 
 async function requestState() {
   try {
-    const resp = await new Promise((res) => chrome.runtime.sendMessage({ type: 'getState' }, res));
+    const resp = await chrome.runtime.sendMessage({ type: MSG_TYPES.GET_STATE });
     if (resp?.ok && resp.state) {
       state = { ...state, ...resp.state };
       render();
@@ -65,9 +86,9 @@ async function requestState() {
   }
 }
 
-// Listen for background-pushed updates (best-effort)
+// Listen for background state broadcasts
 chrome.runtime.onMessage.addListener((msg) => {
-  if (msg?.type === 'state' && msg.state) {
+  if (msg?.type === MSG_TYPES.STATE_UPDATE && msg.state) {
     state = { ...state, ...msg.state };
     render();
   }
@@ -75,34 +96,40 @@ chrome.runtime.onMessage.addListener((msg) => {
 
 els.start.addEventListener('click', async () => {
   showError(null);
+  els.start.disabled = true;
   try {
-    const resp = await new Promise((res) => chrome.runtime.sendMessage({ type: 'start' }, res));
+    const resp = await chrome.runtime.sendMessage({ type: MSG_TYPES.START });
     if (resp?.ok && resp.state) {
       state = { ...state, ...resp.state };
       render();
     } else if (resp?.error) {
       showError(resp.error);
+      els.start.disabled = false;
     }
   } catch (err) {
     showError(err?.message || 'Failed to start capture session');
+    els.start.disabled = false;
   }
 });
 
 els.stop.addEventListener('click', async () => {
+  els.stop.disabled = true;
   try {
-    const resp = await new Promise((res) => chrome.runtime.sendMessage({ type: 'stop' }, res));
+    const resp = await chrome.runtime.sendMessage({ type: MSG_TYPES.STOP });
     if (resp?.ok && resp.state) {
       state = { ...state, ...resp.state };
       render();
     } else if (resp?.error) {
       showError(resp.error);
+      els.stop.disabled = false;
     }
   } catch (err) {
     showError(err?.message || 'Failed to stop capture session');
+    els.stop.disabled = false;
   }
 });
 
-// Initial load + 1s ticker for countdown display
+// Initial load + 1s ticker for live countdown rendering
 requestState();
 const timer = setInterval(render, 1000);
 window.addEventListener('unload', () => clearInterval(timer));

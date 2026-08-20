@@ -46,11 +46,13 @@ function isRestrictedUrl(url) {
         'chrome://',
         'chrome-extension://',
         'edge://',
+        'edge-extension://',
         'about:',
         'devtools://',
         'view-source:',
         'https://chromewebstore.google.com',
-        'https://chrome.google.com/webstore'
+        'https://chrome.google.com/webstore',
+        'https://microsoftedge.microsoft.com/addons'
     ];
     return restrictedPrefixes.some(prefix => url.startsWith(prefix));
 }

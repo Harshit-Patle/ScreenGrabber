@@ -1,8 +1,8 @@
 {
     "manifest_version": 3,
     "name": "ScreenGrabber",
-    "version": "1.0",
-    "description": "Takes a screenshot of the active tab every 5 minutes.",
+    "version": "1.1.0",
+    "description": "Automatically captures periodic screenshots of your active browser tab at customizable time intervals.",
     "permissions": [
         "activeTab",
         "tabs",
@@ -15,6 +15,7 @@
     ],
     "action": {
         "default_popup": "popup.html",
+        "default_title": "ScreenGrabber",
         "default_icon": {
             "16": "images/icon16.png",
             "48": "images/icon48.png",

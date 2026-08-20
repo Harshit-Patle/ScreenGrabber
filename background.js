@@ -26,6 +26,7 @@ const pDownload = (opts) => new Promise((res, rej) => chrome.downloads.download(
 const pStorageGet = (keys) => new Promise((res, rej) => chrome.storage.local.get(keys, r => chrome.runtime.lastError ? rej(chrome.runtime.lastError) : res(r)));
 const pStorageSet = (obj) => new Promise((res, rej) => chrome.storage.local.set(obj, () => chrome.runtime.lastError ? rej(chrome.runtime.lastError) : res()));
 const pStorageRemove = (keys) => new Promise((res, rej) => chrome.storage.local.remove(keys, () => chrome.runtime.lastError ? rej(chrome.runtime.lastError) : res()));
+const pAlarmGet = (name) => new Promise((res) => chrome.alarms.get(name, res));
 
 // Build a serializable state object for the popup
 async function getState() {
@@ -74,16 +75,28 @@ async function takeScreenshot() {
 async function startProcess() {
     const s = await getState();
     if (s.running) return s;
-    await pStorageSet({ [STORAGE_KEYS.running]: true });
-    await takeScreenshot();
-    const nextTs = Date.now() + SCREENSHOT_INTERVAL_MINUTES * 60 * 1000;
-    await pStorageSet({ [STORAGE_KEYS.nextTs]: nextTs });
-    chrome.alarms.create('sg_alarm', {
-        delayInMinutes: SCREENSHOT_INTERVAL_MINUTES,
-        periodInMinutes: SCREENSHOT_INTERVAL_MINUTES
-    });
-    await sendStateUpdate();
-    return getState();
+    try {
+        await takeScreenshot();
+        const nextTs = Date.now() + SCREENSHOT_INTERVAL_MINUTES * 60 * 1000;
+        await pStorageSet({
+            [STORAGE_KEYS.running]: true,
+            [STORAGE_KEYS.nextTs]: nextTs
+        });
+        chrome.alarms.create('sg_alarm', {
+            delayInMinutes: SCREENSHOT_INTERVAL_MINUTES,
+            periodInMinutes: SCREENSHOT_INTERVAL_MINUTES
+        });
+        await sendStateUpdate();
+        return await getState();
+    } catch (err) {
+        chrome.alarms.clear('sg_alarm');
+        await pStorageSet({
+            [STORAGE_KEYS.running]: false,
+            [STORAGE_KEYS.nextTs]: null
+        });
+        await sendStateUpdate();
+        throw err;
+    }
 }
 
 // Stop: clear alarm, mark not running, clear next trigger
@@ -116,6 +129,8 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     if (!s.running) return;
     try {
         await takeScreenshot();
+    } catch (err) {
+        console.warn('ScreenGrabber background capture error:', err);
     } finally {
         const nextTs = Date.now() + SCREENSHOT_INTERVAL_MINUTES * 60 * 1000;
         await pStorageSet({ [STORAGE_KEYS.nextTs]: nextTs });
@@ -134,12 +149,19 @@ chrome.runtime.onInstalled.addListener(async () => {
     try {
         const s = await getState();
         if (s.running) {
-            chrome.alarms.create('sg_alarm', {
-                delayInMinutes: SCREENSHOT_INTERVAL_MINUTES,
-                periodInMinutes: SCREENSHOT_INTERVAL_MINUTES
-            });
-            if (!s.nextTriggerTs) {
-                await pStorageSet({ [STORAGE_KEYS.nextTs]: Date.now() + SCREENSHOT_INTERVAL_MINUTES * 60 * 1000 });
+            const existingAlarm = await pAlarmGet('sg_alarm');
+            if (!existingAlarm) {
+                let delayInMinutes = SCREENSHOT_INTERVAL_MINUTES;
+                if (s.nextTriggerTs && s.nextTriggerTs > Date.now()) {
+                    delayInMinutes = Math.max(0.1, (s.nextTriggerTs - Date.now()) / (60 * 1000));
+                }
+                chrome.alarms.create('sg_alarm', {
+                    delayInMinutes,
+                    periodInMinutes: SCREENSHOT_INTERVAL_MINUTES
+                });
+                if (!s.nextTriggerTs) {
+                    await pStorageSet({ [STORAGE_KEYS.nextTs]: Date.now() + SCREENSHOT_INTERVAL_MINUTES * 60 * 1000 });
+                }
             }
         }
     } catch (_) { /* ignore */ }
